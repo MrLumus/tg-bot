@@ -1,6 +1,9 @@
 // IMPORTS
 const TelegramApi = require("node-telegram-bot-api");
+
 const { gameOptions, againOptions } = require("./options");
+const sequelize = require("./db");
+const UserModel = require("./models");
 
 // CONSTANTS
 const token = "5601386337:AAFsYcpxif5Hhed_zx-Y7oMFqh-l1FkhQEo";
@@ -16,7 +19,15 @@ const startGame = async (chatId) => {
 }
 
 // Функция-обработчик запуска диалога с ботом
-const start = () => {
+const start = async () => {
+
+  try {
+    await sequelize.authenticate();
+    await sequelize.sync();
+  }
+  catch (e) {
+    console.log("Ошибка подключения к БД", e)
+  }
 
   //Установка команд для бота
   bot.setMyCommands([
@@ -31,20 +42,29 @@ const start = () => {
     const chatId = msg.chat.id;
     const from = msg.from;
     
-    // Проверка сообщений на команды
-    switch(text){
-      case "/start": {
-        await bot.sendSticker(chatId, "https://tlgrm.eu/_/stickers/ea5/382/ea53826d-c192-376a-b766-e5abc535f1c9/11.webp")
-        await bot.sendMessage(chatId, `Привет, ${from.username}! Ты готов(а)?`);
-      };
-      case "/info": {
-        return bot.sendMessage(chatId, `Тебя зовут: ${from.first_name} ${from.last_name}`);
-      };
-      case "/game": {
-        startGame(chatId);
-      };
-      default: 
-        return bot.sendMessage(chatId, "Извини, я тебя не понимаю, попробуй еще раз");
+    try {
+      // Проверка сообщений на команды
+      switch(text){
+        case "/start": {
+          if (!UserModel.findOne({chatId})){
+            await UserModel.create({chatId});
+          }
+          await bot.sendSticker(chatId, "https://tlgrm.eu/_/stickers/ea5/382/ea53826d-c192-376a-b766-e5abc535f1c9/11.webp")
+          await bot.sendMessage(chatId, `Привет, ${from.username}! Ты готов(а)?`);
+        };
+        case "/info": {
+          const user = await UserModel.findOne({chatId});
+          return bot.sendMessage(chatId, `Тебя зовут: ${from.first_name} ${from.last_name}. Правильных ответов: ${user.right}, неправильных ответов: ${user.wrong}`);
+        };
+        case "/game": {
+          startGame(chatId);
+        };
+        default: 
+          return bot.sendMessage(chatId, "Извини, я тебя не понимаю, попробуй еще раз");
+      }
+    }
+    catch (e) {
+      return bot.sendMessage(chatId, `Произошла какая-то ошибка :(\nУже исправляю`)
     }
   });
 
@@ -53,18 +73,25 @@ const start = () => {
     const data = msg.data;
     const chatId = msg.message.chat.id;
 
+    const user = await UserModel.findOne({chatId});
+
     // Проверка кнопок на команды и цифры
     switch (data){
       case "/again": {
         return startGame(chatId);
       }
       case String(chats[chatId]): {
-        return bot.sendMessage(chatId, "Поздравляю, ты отгадал(а) цифру!", againOptions)
+        user.right += 1;
+        await bot.sendMessage(chatId, "Поздравляю, ты отгадал(а) цифру!", againOptions);
+        break;
       }
       default: {
-        return bot.sendMessage(chatId, `Ты выбрал(а) цифру ${data}, это неверно :(\nЯ загадал цифру ${chats[chatId]}`, againOptions);
+        user.wrong += 1;
+        await bot.sendMessage(chatId, `Ты выбрал(а) цифру ${data}, это неверно :(\nЯ загадал цифру ${chats[chatId]}`, againOptions);
+        break;
       }
     }
+    await user.save();
   });
 };
 
